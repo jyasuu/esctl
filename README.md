@@ -382,26 +382,109 @@ esctl search clear-scroll <scroll-id>
 ## Snapshots
 
 ```bash
-# Repositories
+# Repository management
 esctl snapshot repo list
+esctl snapshot repo list --output table
+esctl snapshot repo get my-repo
 esctl snapshot repo create my-repo --type fs --settings ./repo-settings.json
+esctl snapshot repo create my-repo --type s3 --settings ./s3-settings.json --verify
 esctl snapshot repo delete my-repo
+esctl snapshot repo delete my-repo --yes
+esctl snapshot repo verify my-repo
 
-# Snapshots
+# List snapshots
 esctl snapshot list my-repo
-esctl snapshot create my-repo snap-2024 --indices "logs-*" --wait
-esctl snapshot restore my-repo snap-2024 --indices "logs-*" --wait
-esctl snapshot delete my-repo snap-2024
+esctl snapshot list my-repo --output table
+esctl snapshot list my-repo "snap-2024-*"       # filter by pattern
+esctl snapshot list my-repo --verbose
+
+# Create snapshot
+esctl snapshot create my-repo snap-$(date +%F)
+esctl snapshot create my-repo my-snap --indices "logs-*,events-*"
+esctl snapshot create my-repo my-snap --include-global-state
+esctl snapshot create my-repo my-snap --ignore-unavailable --partial
+esctl snapshot create my-repo my-snap --wait              # wait for completion
+esctl snapshot create my-repo my-snap --metadata ./meta.json
+
+# Restore snapshot
+esctl snapshot restore my-repo my-snap
+esctl snapshot restore my-repo my-snap --indices "logs-*"
+esctl snapshot restore my-repo my-snap --wait
+esctl snapshot restore my-repo my-snap \
+  --rename-pattern "(.+)" --rename-replacement "restored_\$1"
+esctl snapshot restore my-repo my-snap --index-settings ./overrides.json
+esctl snapshot restore my-repo my-snap --partial --ignore-unavailable
+
+# Delete snapshot(s)
+esctl snapshot delete my-repo my-snap
+esctl snapshot delete my-repo snap-1 snap-2 snap-3     # multi-delete
+
+# Status (in-progress monitoring)
 esctl snapshot status
-esctl snapshot status my-repo snap-2024
+esctl snapshot status my-repo
+esctl snapshot status my-repo my-snap
+esctl snapshot status my-repo my-snap --output table
+
+# Clone / cleanup / stats
+esctl snapshot clone my-repo my-snap --target-repo backup-repo
+esctl snapshot clone my-repo my-snap --target-repo backup-repo --target-name my-snap-copy
+esctl snapshot verify   my-repo
+esctl snapshot cleanup  my-repo
+esctl snapshot repo-stats my-repo
 ```
 
 ## Reindex
 
 ```bash
-esctl reindex --src old-index --dst new-index
-esctl reindex --src old-index --dst new-index --wait
-esctl reindex --src old-index --dst new-index --query ./filter.json
+# Basic reindex
+esctl reindex run --src old-index --dst new-index
+esctl reindex run --src old-index --dst new-index --wait
+esctl reindex run --src old-index --dst new-index --output table
+
+# Filter docs
+esctl reindex run --src old-index --dst new-index --query ./filter.json
+cat filter.json | esctl reindex run --src old --dst new --query -
+
+# Field selection
+esctl reindex run --src old --dst new --fields "name,email,status"
+esctl reindex run --src old --dst new --exclude-fields "secret,internal"
+
+# Transform with Painless script
+esctl reindex run --src old --dst new \
+  --script-source "ctx._source.status = ctx._source.status.toUpperCase()"
+esctl reindex run --src old --dst new --script ./transform.json
+
+# Performance tuning
+esctl reindex run --src old --dst new --batch-size 5000
+esctl reindex run --src old --dst new --slices 4           # parallel
+esctl reindex run --src old --dst new --slices auto        # auto = shard count
+esctl reindex run --src old --dst new --requests-per-second 500
+
+# Conflict handling
+esctl reindex run --src old --dst new --conflicts proceed   # skip conflicts
+esctl reindex run --src old --dst new --conflicts abort     # stop on first
+
+# Pipeline
+esctl reindex run --src old --dst new --pipeline my-pipeline
+
+# op_type: create-only (skip existing)
+esctl reindex run --src old --dst new --op-type create
+
+# Async (returns task ID)
+esctl reindex run --src old --dst new                      # async by default
+esctl reindex run --src old --dst new --wait --timeout 2h  # wait up to 2 hours
+
+# Cross-cluster reindex
+esctl reindex run --src old --dst new \
+  --remote-host http://remote-cluster:9200 \
+  --remote-user elastic --remote-password secret
+
+# Task management
+esctl reindex list                                          # all running tasks
+esctl reindex status <node>:<task_id>                      # task progress
+esctl reindex status <node>:<task_id> --output table       # formatted progress
+esctl reindex cancel <node>:<task_id>
+esctl reindex cancel <node>:<task_id> --yes
 ```
 
 ## Security
