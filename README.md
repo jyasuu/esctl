@@ -307,24 +307,76 @@ esctl doc ingest my-index --body ./data.json --id-field "user_id"
 ## Search
 
 ```bash
-# Simple query string
+# Basic run
+esctl search run my-index
 esctl search run my-index --query "status:active AND age:>30"
-
-# Full DSL
 esctl search run my-index --dsl ./query.json
 cat query.json | esctl search run my-index --dsl -
-
-# With aggregations
-esctl search run my-index --dsl ./query.json --agg ./aggs.json
 
 # Pagination
 esctl search run my-index --query "*" --size 50 --from 100
 
-# Sort
-esctl search run my-index --query "*" --sort "timestamp:desc"
+# Sort (repeatable)
+esctl search run my-index --sort "date:desc" --sort "name:asc"
 
-# Scroll through all results
-esctl search scroll my-index --dsl ./query.json --size 500
+# Source filtering
+esctl search run my-index --query "foo" --fields "name,email,status"
+esctl search run my-index --query "foo" --source-only   # strips _id/_score
+
+# Highlighting
+esctl search run my-index --query "elasticsearch" --highlight "title,body"
+
+# Min score threshold
+esctl search run my-index --query "foo" --min-score 0.5
+
+# Aggregations
+esctl search run my-index --agg ./aggs.json
+esctl search run my-index --dsl ./query.json --agg ./aggs.json
+esctl search run my-index --agg ./aggs.json --agg-only   # suppress hits
+esctl search run my-index --agg ./aggs.json --output table
+
+# Routing / preference
+esctl search run my-index --query "x" --routing "shard-1"
+esctl search run my-index --query "x" --preference "_local"
+
+# Convenience shorthands
+esctl search match  my-index --field title --text "elasticsearch" --size 5
+esctl search term   my-index --field status --value "active"
+esctl search range  my-index --field created_at --gte "2024-01-01" --lte "2024-12-31"
+esctl search range  my-index --field price --gt 10 --lt 100 --sort "price:asc"
+esctl search multi  --indices "logs-*,events-*" --query "error"
+
+# Scroll (retrieve ALL docs)
+esctl search scroll my-index
+esctl search scroll my-index --query "status:active" --size 1000
+esctl search scroll my-index --dsl ./query.json --limit 50000
+esctl search scroll my-index --ndjson > dump.ndjson   # NDJSON export
+esctl search scroll my-index --sort "date:asc" --fields "id,name"
+
+# PIT pagination (preferred over scroll for deep pagination)
+esctl search pit my-index
+esctl search pit my-index --query "active:true" --size 500 --limit 10000
+esctl search pit my-index --ndjson > export.ndjson
+esctl search pit my-index --sort "timestamp:desc"
+
+# Aggregations
+esctl search agg my-index --agg ./terms-agg.json
+esctl search agg my-index --agg ./aggs.json --dsl ./filter.json
+esctl search agg my-index --agg ./aggs.json --name "by_status" --output table
+
+# Query tools
+esctl search explain  my-index doc-123 --query "status:active"
+esctl search explain  my-index doc-123 --dsl ./query.json --output table
+esctl search validate my-index --dsl ./query.json
+esctl search validate my-index --dsl ./query.json --explain
+esctl search profile  my-index --query "foo" --output table
+
+# Suggestions (term suggester)
+esctl search suggest my-index "elsticsearch" --field title
+esctl search suggest my-index "misspeling"   --field body --size 3
+
+# Manage scroll contexts
+esctl search clear-scroll <scroll-id>
 ```
 
 ## Snapshots
