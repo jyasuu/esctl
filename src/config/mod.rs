@@ -43,6 +43,9 @@ pub struct AppConfig {
 
     #[serde(skip)]
     pub tls_skip_verify: bool,
+
+    #[serde(skip)]
+    pub timeout_secs: Option<u64>,
 }
 
 fn default_profile_name() -> String {
@@ -61,6 +64,7 @@ impl Default for AppConfig {
             output: OutputFormat::Json,
             no_color: false,
             tls_skip_verify: false,
+            timeout_secs: None,
         }
     }
 }
@@ -116,8 +120,12 @@ impl AppConfig {
         if let Some(ref p) = cli.password { self.password = Some(p.clone()); }
         if let Some(ref k) = cli.api_key  { self.api_key  = Some(k.clone()); }
 
-        self.output   = cli.output.clone();
-        self.no_color = cli.no_color;
+        self.output      = cli.output.clone();
+        self.no_color    = cli.no_color;
+        self.tls_skip_verify = cli.insecure;
+        if cli.timeout.is_some() {
+            self.timeout_secs = cli.timeout;
+        }
     }
 
     /// Return the active host, falling back to localhost.
@@ -181,5 +189,107 @@ impl AppConfig {
             self.username = p.username.clone();
             self.api_key  = p.api_key.clone();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config_host() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.active_host(), "http://localhost:9200");
+    }
+
+    #[test]
+    fn test_add_and_get_profile() {
+        let mut cfg = AppConfig::default();
+        let args = crate::cli::profile::AddArgs {
+            name: "test".to_string(),
+            host: "http://es.local:9200".to_string(),
+            auth: "basic".to_string(),
+            user: Some("alice".to_string()),
+            api_key: None,
+        };
+        cfg.add_profile(&args).unwrap();
+        let p = cfg.get_profile("test").unwrap();
+        assert_eq!(p.host, "http://es.local:9200");
+        assert_eq!(p.username, Some("alice".to_string()));
+    }
+
+    #[test]
+    fn test_remove_profile() {
+        let mut cfg = AppConfig::default();
+        let args = crate::cli::profile::AddArgs {
+            name: "temp".to_string(),
+            host: "http://x:9200".to_string(),
+            auth: "none".to_string(),
+            user: None,
+            api_key: None,
+        };
+        cfg.add_profile(&args).unwrap();
+        cfg.remove_profile("temp").unwrap();
+        assert!(cfg.get_profile("temp").is_err());
+    }
+
+    #[test]
+    fn test_remove_nonexistent_profile_errors() {
+        let mut cfg = AppConfig::default();
+        assert!(cfg.remove_profile("ghost").is_err());
+    }
+
+    #[test]
+    fn test_set_default_profile() {
+        let mut cfg = AppConfig::default();
+        let args = crate::cli::profile::AddArgs {
+            name: "prod".to_string(),
+            host: "https://prod:9243".to_string(),
+            auth: "apikey".to_string(),
+            user: None,
+            api_key: Some("key123".to_string()),
+        };
+        cfg.add_profile(&args).unwrap();
+        cfg.set_default_profile("prod").unwrap();
+        assert_eq!(cfg.default_profile, "prod");
+    }
+
+    #[test]
+    fn test_set_default_nonexistent_errors() {
+        let mut cfg = AppConfig::default();
+        assert!(cfg.set_default_profile("nope").is_err());
+    }
+
+    #[test]
+    fn test_list_profiles_sorted() {
+        let mut cfg = AppConfig::default();
+        for name in &["zoo", "alpha", "middle"] {
+            let args = crate::cli::profile::AddArgs {
+                name: name.to_string(),
+                host: "http://x:9200".to_string(),
+                auth: "none".to_string(),
+                user: None, api_key: None,
+            };
+            cfg.add_profile(&args).unwrap();
+        }
+        let names: Vec<String> = cfg.list_profiles().into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, vec!["alpha", "middle", "zoo"]);
+    }
+
+    #[test]
+    fn test_hydrate_from_active_profile() {
+        let mut cfg = AppConfig::default();
+        let args = crate::cli::profile::AddArgs {
+            name: "local".to_string(),
+            host: "http://127.0.0.1:9200".to_string(),
+            auth: "basic".to_string(),
+            user: Some("bob".to_string()),
+            api_key: None,
+        };
+        cfg.add_profile(&args).unwrap();
+        cfg.default_profile = "local".to_string();
+        cfg.hydrate_from_active_profile();
+        assert_eq!(cfg.host, Some("http://127.0.0.1:9200".to_string()));
+        assert_eq!(cfg.username, Some("bob".to_string()));
     }
 }

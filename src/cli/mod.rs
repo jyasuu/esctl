@@ -54,6 +54,14 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub no_color: bool,
 
+    /// Request timeout in seconds (default: 30)
+    #[arg(long, global = true, env = "ESCTL_TIMEOUT")]
+    pub timeout: Option<u64>,
+
+    /// Skip TLS certificate verification (insecure)
+    #[arg(long, global = true, env = "ESCTL_INSECURE")]
+    pub insecure: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }

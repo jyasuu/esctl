@@ -2,7 +2,25 @@
 
 A full-featured Elasticsearch CLI written in Rust.
 
-## Build
+## Global Flags
+
+These flags work with every subcommand:
+
+```bash
+esctl [FLAGS] <subcommand>
+
+  -p, --profile <name>       Connection profile  (env: ESCTL_PROFILE)
+      --host <url>           Override ES host     (env: ESCTL_HOST)
+  -u, --user <username>      Basic auth user      (env: ESCTL_USER)
+      --password <pass>      Basic auth password  (env: ESCTL_PASSWORD)
+      --api-key <key>        API key auth         (env: ESCTL_API_KEY)
+  -o, --output json|table    Output format        (default: json)
+      --no-color             Disable ANSI colors  (env: ESCTL_INSECURE)
+      --timeout <secs>       Request timeout      (env: ESCTL_TIMEOUT, default: 30)
+      --insecure             Skip TLS verification
+```
+
+
 
 ```bash
 cargo build --release
@@ -62,47 +80,157 @@ esctl profile show local
 ## Cluster
 
 ```bash
+# Health — simple
 esctl cluster health
 esctl cluster health --level indices
+esctl cluster health --level shards
+esctl cluster health --output table          # colored status board
+
+# Health — wait for green (useful in CI/CD)
+esctl cluster health --wait-for-status green --timeout 60s
+
+# Info (version, node name, UUID)
 esctl cluster info
+esctl cluster info --output table            # clean summary view
+
+# Stats
 esctl cluster stats
+esctl cluster stats --summary                # condensed key metrics
+esctl cluster stats --summary --output table # human-readable table
+
+# Nodes
 esctl cluster nodes
-esctl cluster nodes --verbose
+esctl cluster nodes --output table           # compact table with heap/cpu coloring
+esctl cluster nodes --verbose                # full JVM/OS detail
+esctl cluster nodes --role master            # filter by role
+esctl cluster nodes --role data
+
+# Pending tasks
+esctl cluster pending
+
+# Cluster settings
+esctl cluster settings
+esctl cluster settings --include-defaults
+
+# Update a cluster setting
+esctl cluster set cluster.routing.allocation.enable=all
+esctl cluster set cluster.routing.allocation.enable=none --type persistent
+esctl cluster set indices.recovery.max_bytes_per_sec=100mb
+
+# Allocation explain (why is a shard unassigned?)
+esctl cluster allocation-explain
+esctl cluster allocation-explain --index my-index --shard 0 --primary true
+esctl cluster allocation-explain --output table   # formatted decision board
+
+# Reroute
+esctl cluster reroute --retry-failed
+esctl cluster reroute --retry-failed --dry-run    # simulate only
 ```
 
 ## Indices
 
 ```bash
+# List
 esctl index list
 esctl index list --pattern "logs-*"
-esctl index create my-index --shards 2 --replicas 1
-esctl index create my-index --body ./settings.json
+esctl index list --output table                   # colored health/status table
+esctl index list --sort docs.count                # sort by doc count
+esctl index list --health open                    # open indices only
+esctl index list --health closed                  # closed indices only
+esctl index list --system                         # include . system indices
+
+# Create
+esctl index create my-index
+esctl index create my-index --shards 3 --replicas 1
+esctl index create my-index --body ./settings-and-mappings.json
+cat settings.json | esctl index create my-index --body -
+
+# Delete (single or multi)
 esctl index delete my-index
-esctl index delete my-index --yes        # skip confirmation
-esctl index open  my-index
-esctl index close my-index
+esctl index delete my-index --yes                 # skip confirmation
+esctl index delete idx-a idx-b idx-c --yes        # delete multiple
+
+# Open / Close
+esctl index open   my-index
+esctl index open   my-index --wait-for-active-shards all
+esctl index close  my-index
+esctl index close  my-index --yes
+
+# Stats
 esctl index stats my-index
+esctl index stats my-index --summary              # key metrics only
+esctl index stats my-index --summary --output table
+
+# Info (settings + mapping combined)
+esctl index info my-index
+esctl index info my-index --output table          # settings + field list
+
+# Maintenance
+esctl index refresh    my-index
+esctl index flush      my-index
+esctl index forcemerge my-index
+esctl index forcemerge my-index --max-num-segments 1 --wait
+esctl index clear-cache my-index
+esctl index clear-cache my-index --cache field,query
+
+# Clone & Shrink
+esctl index clone my-index my-index-clone
+esctl index clone my-index my-index-clone --shards 1 --replicas 0
+esctl index shrink big-index small-index --shards 1
+
+# Recovery & Segments
+esctl index recovery my-index
+esctl index segments  my-index
 ```
 
-## Mappings & Settings
+## Mappings
 
 ```bash
-esctl mapping get my-index
+esctl mapping get my-index                        # full mapping JSON
+esctl mapping get my-index --flat                 # flat field:type list
+esctl mapping get my-index --flat --output table  # as a table
+esctl mapping fields my-index                     # alias for --flat
 esctl mapping put my-index --body ./mapping.json
-esctl mapping put my-index --body -       # read from stdin
+esctl mapping put my-index --body -               # from stdin
+```
 
+## Settings
+
+```bash
 esctl settings get my-index
 esctl settings get my-index --include-defaults
+esctl settings get my-index --key number_of_replicas
+esctl settings get my-index --output table        # key/value table
 esctl settings put my-index --body ./settings.json
+esctl settings set my-index number_of_replicas=2
+esctl settings set my-index routing.allocation.enable=none
 ```
 
 ## Aliases
 
 ```bash
+# List
 esctl alias list
 esctl alias list --index my-index
-esctl alias add  my-alias --index my-index
+esctl alias list --name  my-alias
+esctl alias list --output table
+
+# Add
+esctl alias add my-alias --index my-index
+esctl alias add my-alias --index my-index --is-write-index
+esctl alias add my-alias --index my-index --routing shard-1
+esctl alias add my-alias --index my-index --filter ./query.json
+
+# Remove
 esctl alias remove my-alias --index my-index
+
+# Move atomically (remove + add in one request)
+esctl alias move my-alias --from old-index --to new-index
+esctl alias move my-alias --from old-index --to new-index --is-write-index
+
+# Raw actions body
+esctl alias actions ./actions.json
+cat actions.json | esctl alias actions -
 ```
 
 ## Documents
@@ -110,25 +238,70 @@ esctl alias remove my-alias --index my-index
 ```bash
 # Get
 esctl doc get my-index abc123
+esctl doc get my-index abc123 --source-only          # just _source
+esctl doc get my-index abc123 --fields name,status   # specific fields
+esctl doc get my-index abc123 --output table         # metadata + field table
 
-# Index (create/replace)
+# Exists (exit 0 = found, exit 1 = not found)
+esctl doc exists my-index abc123
+
+# Index (create or replace)
 esctl doc index my-index --body ./doc.json
 esctl doc index my-index --id abc123 --body ./doc.json
-echo '{"name":"foo"}' | esctl doc index my-index --body -
+esctl doc index my-index --body - --pipeline my-pipeline
+echo '{"name":"alice"}' | esctl doc index my-index --body -
 
-# Update
+# Create (fails with 409 if ID already exists)
+esctl doc create my-index abc123 --body ./doc.json
+
+# Update (partial doc)
 esctl doc update my-index abc123 --body ./partial.json
+esctl doc update my-index abc123 --body - --retry-on-conflict 5
+# Update via inline Painless script
+esctl doc update my-index abc123 --script "ctx._source.count += 1"
+# Upsert
+esctl doc update my-index abc123 --body ./partial.json --upsert ./default.json
 
 # Delete
 esctl doc delete my-index abc123
+esctl doc delete my-index abc123 --if-seq-no 5 --if-primary-term 1
+
+# Multi-get
+esctl doc mget my-index id-1 id-2 id-3
+esctl doc mget my-index id-1 id-2 --source-only
+esctl doc mget my-index id-1 id-2 --output table
+
+# Count
+esctl doc count my-index
+esctl doc count my-index --query "status:active"
+esctl doc count my-index --dsl ./query.json
+esctl doc count my-index --output table          # prints "Count: 1,234"
+
+# Delete by query
+esctl doc delete-by-query my-index --query "status:deleted"
+esctl doc delete-by-query my-index --dsl ./filter.json --wait
+esctl doc delete-by-query my-index --dsl ./filter.json --slices 4
+
+# Update by query (Painless script)
+esctl doc update-by-query my-index --script "ctx._source.active = true"
+esctl doc update-by-query my-index --dsl ./script-and-query.json --wait
 
 # Bulk NDJSON
 esctl doc bulk my-index ./records.ndjson
 cat records.ndjson | esctl doc bulk my-index
+esctl doc bulk my-index ./records.ndjson --batch 1000   # batched with progress bar
+esctl doc bulk my-index ./records.ndjson --show-errors 20
+esctl doc bulk my-index ./records.ndjson --pipeline my-pipeline
 
-# Write (interactive / piped)
-echo '{"name":"bar"}' | esctl doc write my-index
-esctl doc write my-index --id xyz --body ./doc.json
+# Write (single doc, stdin-first)
+echo '{"event":"login"}' | esctl doc write my-index
+esctl doc write my-index --id abc123 --body ./doc.json
+esctl doc write my-index --create                       # fail if exists
+
+# Ingest (pipe JSON array or NDJSON, auto-batched)
+cat events.json   | esctl doc ingest my-index
+cat events.ndjson | esctl doc ingest my-index --batch 500
+esctl doc ingest my-index --body ./data.json --id-field "user_id"
 ```
 
 ## Search
